@@ -1,6 +1,6 @@
 {
   "name": "pi-mcp-adapter",
-  "version": "2.37.0",
+  "version": "5.0.0",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "types": "./index.ts",
@@ -19,6 +19,11 @@
       "types": "./oauth.ts",
       "import": "./oauth.ts",
       "default": "./oauth.ts"
+    },
+    "./host-managed": {
+      "types": "./host-managed.ts",
+      "import": "./host-managed.ts",
+      "default": "./host-managed.ts"
     },
     "./config": {
       "types": "./dist/config.d.ts",
@@ -84,9 +89,13 @@
     "runtime-owner.ts",
     "tool-metadata.ts",
     "ts-shape.ts",
+    "output-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
+    "tool-parameters.ts",
+    "host-managed.ts",
     "session-approvals.ts",
+    "project-server-trust.ts",
     "init.ts",
     "failure-backoff.ts",
     "ui-session.ts",
@@ -99,6 +108,8 @@
     "commands.ts",
     "prompts.ts",
     "onboarding-state.ts",
+    "pi-signin-import.ts",
+    "pi-builtin-mcp.ts",
     "mcp-setup-panel.ts",
     "types.ts",
     "ui-stream-types.ts",
@@ -120,6 +131,7 @@
     "tool-result-renderer.ts",
     "mcp-output-guard.ts",
     "mcp-code.ts",
+    "mcp-script-wasm.ts",
     "mcp-script-worker.mjs",
     "mcp-probe.ts",
     "mcp-install.ts",
@@ -163,6 +175,7 @@
     "banner.png",
     "skills",
     "README.md",
+    "docs",
     "CHANGELOG.md",
     "LICENSE",
     "dist"
@@ -170,22 +183,22 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/core": "2.0.0",
-    "@modelcontextprotocol/ext-apps": "^1.2.2",
     "@modelcontextprotocol/ext-tasks": "^0.1.0",
-    "@napi-rs/keyring": "^1.3.0",
+    "@napi-rs/keyring": "^2.1.0",
     "@typesafe-ai/sdk": "0.6.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "cross-spawn": "^7.0.6",
     "open": "^10.2.0",
+    "quickjs-wasi": "3.6.2",
     "recheck": "4.6.0-beta.3",
-    "smol-toml": "^1.6.1",
+    "smol-toml": "^1.9.0",
     "strip-json-comments": "^5.0.3",
     "undici": "^6.28.1",
     "zod": "^3.25.0 || ^4.0.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0",
+    "@earendil-works/pi-ai": "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
     "zod": "^3.25.0 || ^4.0.0"
@@ -202,9 +215,9 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.87.0",
-    "@earendil-works/pi-coding-agent": "0.87.0",
-    "@earendil-works/pi-tui": "0.87.0",
+    "@earendil-works/pi-ai": "0.99.1",
+    "@earendil-works/pi-coding-agent": "0.99.2",
+    "@earendil-works/pi-tui": "0.99.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@types/bun": "^1.0.0",
     "@types/cross-spawn": "6.0.6",

@@ -122,6 +122,64 @@ function stripQuotes(value: string): string {
   return value;
 }
 
+function findCurrentPromptTokenStart(input: string): number {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let start = 0;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input.charAt(i);
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) start = i + 1;
+  }
+
+  return start;
+}
+
+export function completePromptArgs(
+  metadata: PromptMetadata,
+  input: string,
+): Array<{ value: string; label: string; description?: string }> | null {
+  const tokenStart = findCurrentPromptTokenStart(input);
+  const current = input.slice(tokenStart);
+  if (current.includes("=") || current.startsWith('"') || current.startsWith("'")) return null;
+
+  const committed = input.slice(0, tokenStart);
+  const parsed = parsePromptArgs(committed);
+  const used = new Set(Object.keys(parsed.named));
+  let positionalIndex = 0;
+
+  for (const arg of metadata.arguments) {
+    if (Object.hasOwn(parsed.named, arg.name)) continue;
+    const positional = parsed.positional[positionalIndex++];
+    if (positional !== undefined && positional !== "") used.add(arg.name);
+  }
+
+  const matches = metadata.arguments.filter(arg => !used.has(arg.name) && arg.name.startsWith(current));
+  if (matches.length === 0) return null;
+
+  return matches.map(arg => ({
+    value: committed + arg.name + "=",
+    label: arg.name + "=",
+    ...(arg.description ? { description: arg.description } : {}),
+  }));
+}
+
 export interface ResolvedPromptArgs {
   ok: boolean;
   /** Present when `ok === true`. */
@@ -249,6 +307,16 @@ export function createPromptCommand(
 
   return {
     description,
+    getArgumentCompletions: (prefix: string) => {
+      const state = getState();
+      if (!state) return completePromptArgs(metadata, prefix);
+      const definition = state.config.mcpServers[metadata.serverName];
+      if (!definition || isServerDisabled(definition)) return null;
+
+      const liveMetadata = findLivePromptMetadata(state, metadata.serverName, metadata.originalName);
+      if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) return null;
+      return completePromptArgs(liveMetadata ?? metadata, prefix);
+    },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       let state = getState();
       if (!state && runtime.ensureState) {
@@ -269,7 +337,7 @@ export function createPromptCommand(
       if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
+            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
@@ -277,17 +345,17 @@ export function createPromptCommand(
       }
       const live = liveMetadata ?? metadata;
       const parsed = parsePromptArgs(args ?? "");
-      const resolved = resolvePromptArgs(live, parsed);
-      if (!resolved.ok) {
+      let resolved = resolvePromptArgs(live, parsed);
+      // Cached argument lists can be stale; only live metadata may reject before the connect that refreshes them.
+      if (!resolved.ok && state.promptMetadataLive?.has(metadata.serverName)) {
         if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
         return;
       }
-      const promptArgs = resolved.args ?? {};
 
       if (!state.config.mcpServers[metadata.serverName]) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${live.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
+            `MCP prompt "${live.originalName}" is no longer configured. Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
@@ -307,7 +375,7 @@ export function createPromptCommand(
           const conn = state.manager.getConnection(metadata.serverName);
           const message = conn?.status === "needs-auth"
             ? `MCP server "${metadata.serverName}" needs authentication. Run /mcp-auth ${metadata.serverName}.`
-            : `MCP server "${metadata.serverName}" is not available. Run /mcp reconnect ${metadata.serverName}.`;
+            : `MCP server "${metadata.serverName}" is not available. Run /mcp-adapter reconnect ${metadata.serverName}.`;
           ctx.ui.notify(message, "error");
         }
         return;
@@ -317,13 +385,21 @@ export function createPromptCommand(
       if (state.promptMetadataLive?.has(metadata.serverName) && !refreshed) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
+            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
         return;
       }
       const dispatchMetadata = refreshed ?? live;
+      if (!resolved.ok) {
+        resolved = resolvePromptArgs(dispatchMetadata, parsed);
+        if (!resolved.ok) {
+          if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+          return;
+        }
+      }
+      const promptArgs = resolved.args ?? {};
       let result: GetPromptResult;
       try {
         result = await state.manager.getPrompt(
@@ -370,7 +446,7 @@ function buildCommandDescription(metadata: PromptMetadata): string {
 }
 
 /**
- * Public helper used by `/mcp prompts` to render the list of prompts known
+ * Public helper used by `/mcp-adapter prompts` to render the list of prompts known
  * to the adapter, whether from a live connection or the metadata cache.
  */
 export function listAllPromptMetadata(state: McpExtensionState): PromptMetadata[] {

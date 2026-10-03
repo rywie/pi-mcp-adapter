@@ -196,6 +196,28 @@ describe("semantic search", () => {
     }
   });
 
+  it("keeps the semantic server allowlist when falling back to lexical search", async () => {
+    const state = stateWithTools();
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo", "other"] };
+    state.config.mcpServers.excluded = { command: "excluded" };
+    state.toolMetadata.get("demo")![0]!.description = "Weather forecast";
+    state.toolMetadata.set("excluded", [{ name: "excluded_weather", originalName: "weather", description: "Weather forecast" }]);
+    const evaluator: SemanticSearchEvaluator = vi.fn(async (_state, input) => {
+      expect(input.sources).toEqual(["demo", "other"]);
+      return { ok: false, error: { code: "timeout", message: "down" } };
+    });
+
+    const gateway = await gatewaySemantic(state, "weather", evaluator);
+    expect(gateway.details.backend).toMatchObject({ used: "lexical", degraded: true });
+    expect(gateway.details.matches.map((match: { server: string }) => match.server).sort()).toEqual(["demo", "other"]);
+
+    const script = await runMcpScript(state, 'emit(await tools.search({ query: "weather", searchMode: "semantic" }))',
+      2_000, undefined, undefined, undefined, evaluator);
+    const payload = JSON.parse(script.content[0]!.text);
+    expect(payload.backend).toMatchObject({ used: "lexical", degraded: true });
+    expect(payload.items.map((item: { server: string }) => item.server).sort()).toEqual(["demo", "other"]);
+  });
+
   it("preserves pagination, schemas, and approval markers without executing", async () => {
     const state = stateWithTools();
     state.config.settings!.approveTools = true;
@@ -226,19 +248,30 @@ describe("semantic search", () => {
   });
 
   it("aborts and traces an in-flight semantic worker search at the script deadline", async () => {
-    const evaluator: SemanticSearchEvaluator = (_state, _input, options) => new Promise(resolve => {
-      options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
-    });
-    const result = await runMcpScript(
-      stateWithTools(),
-      'await tools.search({ query: "umbrella", searchMode: "semantic" })',
-      100,
-      undefined,
-      undefined,
-      undefined,
-      evaluator,
-    );
-    expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
+    // The deadline also covers worker startup, so it only fires once the search is in flight.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let searchStarted!: () => void;
+      const searching = new Promise<void>(resolve => { searchStarted = resolve; });
+      const evaluator: SemanticSearchEvaluator = (_state, _input, options) => new Promise(resolve => {
+        options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
+        searchStarted();
+      });
+      const run = runMcpScript(
+        stateWithTools(),
+        'await tools.search({ query: "umbrella", searchMode: "semantic" })',
+        100,
+        undefined,
+        undefined,
+        undefined,
+        evaluator,
+      );
+      await Promise.race([searching, run]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await run).details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("applies the script token budget to semantic worker searches", async () => {
